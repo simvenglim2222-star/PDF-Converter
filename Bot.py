@@ -19,7 +19,7 @@ try:
 except ImportError:
     HEIC_SUPPORT = False
 
-# PDF rendering (optional, but required for PDF compression)
+# PDF rendering (PyMuPDF)
 try:
     import fitz  # PyMuPDF
     PDF_SUPPORT = True
@@ -81,7 +81,7 @@ PENDING_TIMEOUT = 300  # 5 minutes
 # Pending PDFs waiting for filename (after PDF format chosen)
 pending_pdfs: Dict[int, Dict] = {}
 
-# Pending PDF compression requests
+# Pending PDF compression requests (waiting for filename)
 pending_pdf_compress: Dict[int, Dict] = {}
 
 # Recent errors for admin
@@ -121,12 +121,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Welcome to the AMT Scholarship Document Converter.\n\n"
         "This official tool helps you prepare images for scholarship applications.\n"
         "You can convert your files to JPEG or PDF, and the output size is always ≤ 1 MB.\n"
-        "If you send a PDF, I can compress it for you.\n\n"
+        "If you send a PDF, I will ask for a filename and then compress it for you.\n\n"
         "How to use:\n"
         "  1. Send one or more images (photos or documents).\n"
         "  2. Choose the output format: PDF or JPEG.\n"
         "  3. If PDF, you may provide a custom filename.\n"
-        "  4. If you send a PDF, I will ask if you want to compress it.\n\n"
+        "  4. If you send a PDF, provide a filename when asked.\n\n"
         "Additional commands:\n"
         "  /settings – adjust compression settings\n"
         "  /cancel – cancel a pending operation\n\n"
@@ -178,7 +178,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         pending_format.pop(user_id, None)
         cancelled = True
 
-    # Cancel pending filename (PDF)
+    # Cancel pending filename (PDF from images)
     if user_id in pending_pdfs:
         pending_pdfs.pop(user_id, None)
         cancelled = True
@@ -211,7 +211,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "📊 **AMT Scholarship Converter Status**\n\n"
         f"Active album tasks: {active_album_tasks}\n"
         f"Pending format choices: {pending_format_users}\n"
-        f"Pending filename requests: {pending_filename_users}\n"
+        f"Pending filename requests (PDF from images): {pending_filename_users}\n"
         f"Pending PDF compression requests: {pending_pdf_compress_users}\n"
         f"Users with custom settings: {total_users_with_settings}\n"
         f"Recent errors: {len(recent_errors_list)}\n"
@@ -225,7 +225,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ----------------------------------------------------------------------
-# Inline button handler (settings + format selection + PDF compress)
+# Inline button handler (settings + format selection)
 # ----------------------------------------------------------------------
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -254,30 +254,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:  # format_jpeg
             await query.edit_message_text("✅ You chose JPEG. Processing...")
             await process_jpeg_output(chat_id, user_id, file_ids, context)
-        return
-
-    # --- PDF compression callbacks ---
-    if data == "compress_pdf_yes" or data == "compress_pdf_no":
-        if user_id not in pending_pdf_compress:
-            await query.edit_message_text("❌ No pending PDF to compress.")
-            return
-
-        pending = pending_pdf_compress.pop(user_id)
-        if time.time() - pending["timestamp"] > PENDING_TIMEOUT:
-            await query.edit_message_text("⏰ Request expired. Please send the PDF again.")
-            return
-
-        file_id = pending["file_id"]
-        chat_id = pending["chat_id"]
-        original_filename = pending.get("filename", "document.pdf")
-
-        if data == "compress_pdf_no":
-            await query.edit_message_text("✅ PDF compression cancelled.")
-            return
-
-        # Yes, compress
-        await query.edit_message_text("✅ Compressing PDF...")
-        await process_pdf_compression(chat_id, user_id, file_id, original_filename, context)
         return
 
     # --- Settings callbacks ---
@@ -341,38 +317,30 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     file_name = doc.file_name or ""
     mime_type = doc.mime_type or ""
     if file_name.lower().endswith(".pdf") or mime_type == "application/pdf":
-        await _handle_pdf_document(update, context, doc)
+        await _ask_pdf_compress_filename(update, context, doc)
     else:
         await _handle_media(update, context, doc.file_id)
 
 
-async def _handle_pdf_document(update: Update, context: ContextTypes.DEFAULT_TYPE, doc) -> None:
-    """Ask user if they want to compress the PDF."""
+async def _ask_pdf_compress_filename(update: Update, context: ContextTypes.DEFAULT_TYPE, doc) -> None:
+    """Ask user for filename for the compressed PDF."""
     if not PDF_SUPPORT:
         await update.message.reply_text("❌ PDF compression is not available. Please install PyMuPDF.")
         return
 
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    original_filename = doc.file_name or "document.pdf"
 
-    # Store pending compression request
     pending_pdf_compress[user_id] = {
         "file_id": doc.file_id,
         "chat_id": chat_id,
         "timestamp": time.time(),
-        "filename": doc.file_name or "document.pdf",
+        "original_filename": original_filename,
     }
 
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Yes, compress", callback_data="compress_pdf_yes"),
-            InlineKeyboardButton("❌ No, cancel", callback_data="compress_pdf_no"),
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "This is a PDF file. Do you want to compress it to ≤ 1 MB?",
-        reply_markup=reply_markup
+        "📝 Please provide a filename for the compressed PDF (or use /skip for default)."
     )
 
 
@@ -445,7 +413,7 @@ async def _ask_for_format(chat_id: int, user_id: int, file_ids: List[str], bot) 
 
 
 # ----------------------------------------------------------------------
-# Filename handling (for PDF)
+# Filename handling (for PDF from images)
 # ----------------------------------------------------------------------
 async def _ask_for_filename(chat_id: int, user_id: int, file_ids: List[str], bot) -> None:
     pending_pdfs[user_id] = {
@@ -463,49 +431,85 @@ async def handle_text_for_filename(update: Update, context: ContextTypes.DEFAULT
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    if user_id not in pending_pdfs:
-        await update.message.reply_text("Send me an image to convert, or use /start for help.")
+    # Check for PDF compression pending
+    if user_id in pending_pdf_compress:
+        pending = pending_pdf_compress.pop(user_id)
+        if time.time() - pending["timestamp"] > PENDING_TIMEOUT:
+            await update.message.reply_text("⏰ Filename request expired. Please send the PDF again.")
+            return
+
+        filename = sanitize_filename(update.message.text.strip())
+        await process_pdf_compression(
+            chat_id, user_id, pending["file_id"],
+            pending["original_filename"], filename, context
+        )
         return
 
-    pending = pending_pdfs.pop(user_id)
-    if time.time() - pending["timestamp"] > PENDING_TIMEOUT:
-        await update.message.reply_text("⏰ Filename request expired. Please send the images again.")
+    # Check for image-to-PDF filename pending
+    if user_id in pending_pdfs:
+        pending = pending_pdfs.pop(user_id)
+        if time.time() - pending["timestamp"] > PENDING_TIMEOUT:
+            await update.message.reply_text("⏰ Filename request expired. Please send the images again.")
+            return
+
+        filename = sanitize_filename(update.message.text.strip())
+        await process_pdf_output(chat_id, user_id, pending["file_ids"], filename, context)
         return
 
-    filename = update.message.text.strip()
-    filename = re.sub(r'[^\w\s.-]', '', filename, flags=re.UNICODE)
-    filename = filename.replace("/", "_").replace("\\", "_")
-    filename = ' '.join(filename.split())
-    if not filename:
-        filename = "converted"
-    if not filename.lower().endswith(".pdf"):
-        filename += ".pdf"
-    if len(filename) > 100:
-        filename = filename[:100]
-
-    await process_pdf_output(chat_id, user_id, pending["file_ids"], filename, context)
+    # If no pending filename request
+    await update.message.reply_text("Send me an image to convert, or use /start for help.")
 
 
 async def skip_filename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    if user_id not in pending_pdfs:
-        await update.message.reply_text("No pending PDF to send.")
+    # PDF compression skip
+    if user_id in pending_pdf_compress:
+        pending = pending_pdf_compress.pop(user_id)
+        if time.time() - pending["timestamp"] > PENDING_TIMEOUT:
+            await update.message.reply_text("⏰ Filename request expired. Please send the PDF again.")
+            return
+        base = os.path.splitext(pending["original_filename"])[0]
+        filename = f"{base}_compressed.pdf"
+        await process_pdf_compression(
+            chat_id, user_id, pending["file_id"],
+            pending["original_filename"], filename, context
+        )
         return
 
-    pending = pending_pdfs.pop(user_id)
-    if time.time() - pending["timestamp"] > PENDING_TIMEOUT:
-        await update.message.reply_text("⏰ Filename request expired. Please send the images again.")
+    # Image-to-PDF skip
+    if user_id in pending_pdfs:
+        pending = pending_pdfs.pop(user_id)
+        if time.time() - pending["timestamp"] > PENDING_TIMEOUT:
+            await update.message.reply_text("⏰ Filename request expired. Please send the images again.")
+            return
+        await process_pdf_output(chat_id, user_id, pending["file_ids"], "converted.pdf", context)
         return
 
-    await process_pdf_output(chat_id, user_id, pending["file_ids"], "converted.pdf", context)
+    await update.message.reply_text("No pending PDF to send.")
+
+
+def sanitize_filename(text: str) -> str:
+    """Clean user-provided filename."""
+    filename = text.strip()
+    filename = re.sub(r'[^\w\s.-]', '', filename, flags=re.UNICODE)
+    filename = filename.replace("/", "_").replace("\\", "_")
+    filename = ' '.join(filename.split())
+    if not filename:
+        filename = "document"
+    if not filename.lower().endswith(".pdf"):
+        filename += ".pdf"
+    if len(filename) > 100:
+        filename = filename[:100]
+    return filename
 
 
 # ----------------------------------------------------------------------
 # Output processing
 # ----------------------------------------------------------------------
 async def process_pdf_output(chat_id: int, user_id: int, file_ids: List[str], filename: str, context) -> None:
+    """Process images and create a PDF."""
     settings = get_user_settings(user_id)
     status_msg = await context.bot.send_message(chat_id=chat_id, text="⏳ Processing PDF...")
     try:
@@ -535,6 +539,7 @@ async def process_pdf_output(chat_id: int, user_id: int, file_ids: List[str], fi
 
 
 async def process_jpeg_output(chat_id: int, user_id: int, file_ids: List[str], context) -> None:
+    """Process images and send as JPEG."""
     settings = get_user_settings(user_id)
     status_msg = await context.bot.send_message(chat_id=chat_id, text="⏳ Processing JPEG...")
     try:
@@ -560,7 +565,9 @@ async def process_jpeg_output(chat_id: int, user_id: int, file_ids: List[str], c
         await status_msg.edit_text("❌ Sorry, an error occurred while processing your images.")
 
 
-async def process_pdf_compression(chat_id: int, user_id: int, file_id: str, original_filename: str, context) -> None:
+async def process_pdf_compression(chat_id: int, user_id: int, file_id: str,
+                                  original_filename: str, output_filename: str,
+                                  context) -> None:
     """Download PDF, render pages to images, compress, and send as new PDF."""
     settings = get_user_settings(user_id)
     status_msg = await context.bot.send_message(chat_id=chat_id, text="⏳ Compressing PDF...")
@@ -577,10 +584,6 @@ async def process_pdf_compression(chat_id: int, user_id: int, file_id: str, orig
 
         # Create compressed PDF
         new_pdf_bytes = await asyncio.to_thread(create_pdf_with_limit, jpeg_list, settings)
-
-        # Generate output filename
-        base_name = os.path.splitext(original_filename)[0] if original_filename else "document"
-        output_filename = f"{base_name}_compressed.pdf"
 
         await status_msg.delete()
         await context.bot.send_document(
@@ -602,14 +605,11 @@ def render_pdf_to_jpegs(pdf_bytes: bytes, settings: Dict) -> List[bytes]:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
-            # Render at settings['dpi'] (or default 150) to get a pixmap
             dpi = settings.get("dpi", 150)
-            zoom = dpi / 72  # 72 is PDF default DPI
+            zoom = dpi / 72
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat, alpha=False)
-            # Convert to PIL Image
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            # Save as JPEG with settings quality
             out_buf = io.BytesIO()
             img.save(out_buf, format="JPEG", quality=settings["quality"], optimize=True)
             jpeg_list.append(out_buf.getvalue())
