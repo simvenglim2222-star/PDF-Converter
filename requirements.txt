@@ -1,0 +1,5 @@
+python-telegram-bot==21.3
+Pillow==10.3.0
+img2pdf==0.5.1
+pillow-heif==0.15.0
+python-dotenv==1.0.1
