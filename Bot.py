@@ -106,10 +106,9 @@ async def download_file(file_id: str, bot) -> bytes:
 # Command handlers
 # ----------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Formal welcome message for AMT Scholarship Converter."""
+    """Short and clear welcome message."""
     user = update.effective_user
     first_name = user.first_name if user.first_name else "there"
-    greeting = f"Hello, {first_name}!"
 
     heic_note = "✅ HEIC/HEIF support enabled." if HEIC_SUPPORT else \
                 "⚠️ HEIC/HEIF not supported. Install `pillow-heif`."
@@ -117,22 +116,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                "⚠️ PDF compression not available. Install `PyMuPDF`."
 
     welcome_text = (
-        f"{greeting}\n\n"
-        "Welcome to the AMT Scholarship Document Converter.\n\n"
-        "This official tool helps you prepare images for scholarship applications.\n"
-        "You can convert your files to JPEG or PDF, and the output size is always ≤ 1 MB.\n"
-        "If you send a PDF, I will ask for a filename and then compress it for you.\n\n"
+        f"Hello, {first_name}!\n\n"
+        "Welcome to AMT Scholarship Document Converter.\n\n"
+        "• Send images → convert to PDF or JPEG (≤1 MB)\n"
+        "• Send a PDF → compress it (≤1 MB)\n\n"
         "How to use:\n"
-        "  1. Send one or more images (photos or documents).\n"
-        "  2. Choose the output format: PDF or JPEG.\n"
-        "  3. If PDF, you may provide a custom filename.\n"
-        "  4. If you send a PDF, provide a filename when asked.\n\n"
-        "Additional commands:\n"
-        "  /settings – adjust compression settings\n"
-        "  /cancel – cancel a pending operation\n\n"
+        "1. Send image(s) or PDF.\n"
+        "2. Choose format if images (PDF/JPEG).\n"
+        "3. Provide a filename if needed.\n\n"
+        "Commands:\n"
+        "/settings – adjust compression\n"
+        "/cancel – cancel pending operation\n\n"
         f"{heic_note}\n"
         f"{pdf_note}\n"
-        "Please send your images or PDF to begin."
+        "Send your file to begin."
     )
     await update.message.reply_text(welcome_text)
 
