@@ -71,11 +71,11 @@ album_chat_id: Dict[str, int] = {}
 album_user_id: Dict[str, int] = {}
 
 # Pending images waiting for output format choice
-pending_format: Dict[int, Dict] = {}  # user_id -> {"file_ids": list, "chat_id": int, "timestamp": float}
+pending_format: Dict[int, Dict] = {}
 PENDING_TIMEOUT = 300  # 5 minutes
 
 # Pending PDFs waiting for filename (after PDF format chosen)
-pending_pdfs: Dict[int, Dict] = {}  # user_id -> {"pdf_bytes": bytes, "chat_id": int, "timestamp": float}
+pending_pdfs: Dict[int, Dict] = {}
 
 # Recent errors for admin
 recent_errors: Deque[str] = deque(maxlen=10)
@@ -99,17 +99,23 @@ async def download_file(file_id: str, bot) -> bytes:
 # Command handlers
 # ----------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Formal welcome message for AMT Scholarship Converter."""
     heic_note = "✅ HEIC/HEIF support enabled." if HEIC_SUPPORT else \
                 "⚠️ HEIC/HEIF not supported. Install `pillow-heif`."
+
     await update.message.reply_text(
-        "👋 Hi! I convert images to JPEG or PDF (≤ 1 MB).\n\n"
-        "📌 After you send images, I'll ask whether you want JPEG or PDF.\n"
-        "• PDF: combines all images into one document.\n"
-        "• JPEG: sends each image separately, compressed.\n"
-        "• Use /settings to adjust compression.\n"
-        "• Use /cancel to abort a pending operation.\n\n"
+        "Welcome to the **AMT Scholarship Document Converter**.\n\n"
+        "This official tool assists you in preparing images for scholarship applications.\n"
+        "It converts your images to **JPEG** or **PDF**, ensuring output size ≤ 1 MB.\n\n"
+        "**How to use:**\n"
+        "• Send one or more images (photos or documents).\n"
+        "• Choose the required output format: PDF or JPEG.\n"
+        "• For PDF, you may specify a custom filename.\n\n"
+        "**Additional commands:**\n"
+        "• /settings – adjust compression settings\n"
+        "• /cancel – abort a pending operation\n\n"
         f"{heic_note}\n"
-        "Just send the images!"
+        "Please send your images to begin."
     )
 
 
@@ -127,7 +133,10 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("🔧 Adjust your compression settings:", reply_markup=reply_markup)
+    await update.message.reply_text(
+        "🔧 Adjust your compression settings:",
+        reply_markup=reply_markup
+    )
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -175,7 +184,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     recent_errors_list = list(recent_errors)
 
     msg = (
-        "📊 **Bot Status**\n\n"
+        "📊 **AMT Scholarship Converter Status**\n\n"
         f"Active album tasks: {active_album_tasks}\n"
         f"Pending format choices: {pending_format_users}\n"
         f"Pending filename requests: {pending_filename_users}\n"
@@ -216,7 +225,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         if data == "format_pdf":
             await query.edit_message_text("✅ You chose PDF. Now processing...")
-            # Ask for filename (existing flow)
             await _ask_for_filename(chat_id, user_id, file_ids, context.bot)
         else:  # format_jpeg
             await query.edit_message_text("✅ You chose JPEG. Processing...")
@@ -254,7 +262,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text("🔧 Adjust your compression settings:", reply_markup=reply_markup)
+    await query.edit_message_text(
+        "🔧 Adjust your compression settings:",
+        reply_markup=reply_markup
+    )
 
 
 # ----------------------------------------------------------------------
@@ -283,7 +294,6 @@ async def _handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    # If user has pending format choice, inform them
     if user_id in pending_format:
         await update.message.reply_text("ℹ️ You already have a pending operation. Please choose a format or /cancel.")
 
@@ -291,7 +301,6 @@ async def _handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file
     media_group_id = message.media_group_id
 
     if media_group_id:
-        # Album: collect files, then after delay ask for format
         if media_group_id not in album_photos:
             album_photos[media_group_id] = []
             album_chat_id[media_group_id] = chat_id
@@ -305,13 +314,11 @@ async def _handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file
         task = asyncio.create_task(_process_album_after_delay(update, context, media_group_id))
         album_tasks[media_group_id] = task
     else:
-        # Single image: ask for format immediately
         await _ask_for_format(chat_id, user_id, [file_id], context.bot)
 
 
 async def _process_album_after_delay(update: Update, context: ContextTypes.DEFAULT_TYPE,
                                      media_group_id: str) -> None:
-    """Wait 3 seconds to collect all album images, then ask for output format."""
     await asyncio.sleep(3)
     chat_id = album_chat_id.get(media_group_id)
     if chat_id is None:
@@ -319,7 +326,6 @@ async def _process_album_after_delay(update: Update, context: ContextTypes.DEFAU
     file_ids = album_photos.get(media_group_id, [])
     user_id = album_user_id.get(media_group_id)
 
-    # Clean up album storage
     album_photos.pop(media_group_id, None)
     album_chat_id.pop(media_group_id, None)
     album_user_id.pop(media_group_id, None)
@@ -332,7 +338,6 @@ async def _process_album_after_delay(update: Update, context: ContextTypes.DEFAU
 
 
 async def _ask_for_format(chat_id: int, user_id: int, file_ids: List[str], bot) -> None:
-    """Store file IDs and ask user to choose PDF or JPEG."""
     pending_format[user_id] = {
         "file_ids": file_ids,
         "chat_id": chat_id,
@@ -348,7 +353,7 @@ async def _ask_for_format(chat_id: int, user_id: int, file_ids: List[str], bot) 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await bot.send_message(
         chat_id=chat_id,
-        text="Choose output format:",
+        text="Please choose the required output format:",
         reply_markup=reply_markup
     )
 
@@ -357,7 +362,6 @@ async def _ask_for_format(chat_id: int, user_id: int, file_ids: List[str], bot) 
 # Filename handling (for PDF)
 # ----------------------------------------------------------------------
 async def _ask_for_filename(chat_id: int, user_id: int, file_ids: List[str], bot) -> None:
-    """Store file IDs and ask user for a filename."""
     pending_pdfs[user_id] = {
         "file_ids": file_ids,
         "chat_id": chat_id,
@@ -365,12 +369,11 @@ async def _ask_for_filename(chat_id: int, user_id: int, file_ids: List[str], bot
     }
     await bot.send_message(
         chat_id=chat_id,
-        text="📝 Please send the desired filename (or /skip to use default)."
+        text="📝 Please provide a filename for the PDF (or use /skip for default)."
     )
 
 
 async def handle_text_for_filename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle user text messages that are responses to filename prompt."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
@@ -398,7 +401,6 @@ async def handle_text_for_filename(update: Update, context: ContextTypes.DEFAULT
 
 
 async def skip_filename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Command to skip filename and use default."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
@@ -418,7 +420,6 @@ async def skip_filename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 # Output processing
 # ----------------------------------------------------------------------
 async def process_pdf_output(chat_id: int, user_id: int, file_ids: List[str], filename: str, context) -> None:
-    """Download images, create PDF, and send with given filename."""
     settings = get_user_settings(user_id)
     status_msg = await context.bot.send_message(chat_id=chat_id, text="⏳ Processing PDF...")
     try:
@@ -439,7 +440,7 @@ async def process_pdf_output(chat_id: int, user_id: int, file_ids: List[str], fi
             chat_id=chat_id,
             document=io.BytesIO(pdf_bytes),
             filename=filename,
-            caption="✅ Your PDF is ready! (≤ 1 MB)"
+            caption="Thank you for using the AMT Scholarship Document Converter. Your PDF has been successfully prepared."
         )
         logger.info(f"PDF processed in {time.time()-start_time:.2f}s, {len(processed_images)} images")
     except Exception as e:
@@ -448,7 +449,6 @@ async def process_pdf_output(chat_id: int, user_id: int, file_ids: List[str], fi
 
 
 async def process_jpeg_output(chat_id: int, user_id: int, file_ids: List[str], context) -> None:
-    """Download images, compress each as JPEG, and send separately."""
     settings = get_user_settings(user_id)
     status_msg = await context.bot.send_message(chat_id=chat_id, text="⏳ Processing JPEG...")
     try:
@@ -459,14 +459,13 @@ async def process_jpeg_output(chat_id: int, user_id: int, file_ids: List[str], c
             jpeg_bytes = await asyncio.to_thread(process_image_bytes, img_bytes, settings)
             if jpeg_bytes is None:
                 continue
-            # Ensure JPEG is under 1MB
             jpeg_bytes = await asyncio.to_thread(ensure_jpeg_under_limit, jpeg_bytes, settings)
             filename = f"image_{i+1}.jpg"
             await context.bot.send_document(
                 chat_id=chat_id,
                 document=io.BytesIO(jpeg_bytes),
                 filename=filename,
-                caption=f"✅ JPEG {i+1} ready! (≤ 1 MB)"
+                caption="Thank you for using the AMT Scholarship Document Converter. Your JPEG has been successfully prepared."
             )
         await status_msg.delete()
         logger.info(f"JPEG processed in {time.time()-start_time:.2f}s, {len(file_ids)} images")
@@ -479,7 +478,6 @@ async def process_jpeg_output(chat_id: int, user_id: int, file_ids: List[str], c
 # Image processing functions
 # ----------------------------------------------------------------------
 def process_image_bytes(img_bytes: bytes, settings: Dict) -> Optional[bytes]:
-    """Process a single image: open, apply EXIF, resize, compress. Returns JPEG bytes."""
     try:
         img = Image.open(io.BytesIO(img_bytes))
         img = ImageOps.exif_transpose(img)
@@ -500,12 +498,10 @@ def process_image_bytes(img_bytes: bytes, settings: Dict) -> Optional[bytes]:
 
 
 def ensure_jpeg_under_limit(jpeg_bytes: bytes, settings: Dict) -> bytes:
-    """Reduce JPEG quality until size ≤ 1MB."""
     if len(jpeg_bytes) <= MAX_OUTPUT_SIZE:
         return jpeg_bytes
     quality = settings["quality"]
     max_width = settings["max_width"]
-    # Try reducing quality and width iteratively
     for _ in range(5):
         quality = max(20, int(quality * 0.8))
         max_width = max(800, int(max_width * 0.8))
@@ -522,12 +518,10 @@ def ensure_jpeg_under_limit(jpeg_bytes: bytes, settings: Dict) -> bytes:
         jpeg_bytes = out_buf.getvalue()
         if len(jpeg_bytes) <= MAX_OUTPUT_SIZE:
             return jpeg_bytes
-    # If still too large, return the last (smallest) attempt
     return jpeg_bytes
 
 
 def create_pdf_with_limit(image_jpeg_list: List[bytes], settings: Dict) -> bytes:
-    """Create a PDF from JPEG images, ensuring final size ≤ 1MB."""
     pdf_bytes = img2pdf.convert(image_jpeg_list, dpi=settings["dpi"])
     if len(pdf_bytes) <= MAX_OUTPUT_SIZE:
         return pdf_bytes
@@ -580,27 +574,22 @@ def main() -> None:
     global application
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("settings", settings))
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(CommandHandler("admin", admin))
     application.add_handler(CommandHandler("skip", skip_filename))
 
-    # Callback query handler for settings and format selection
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    # Media handlers
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
-    # Text handler for filename responses
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_for_filename))
 
-    # Error handler
     application.add_error_handler(error_handler)
 
-    print("Bot is running...")
+    print("AMT Scholarship Document Converter is running...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
