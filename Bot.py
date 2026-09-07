@@ -100,23 +100,29 @@ async def download_file(file_id: str, bot) -> bytes:
 # ----------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Formal welcome message for AMT Scholarship Converter."""
+    user = update.effective_user
+    first_name = user.first_name if user.first_name else "there"
+    greeting = f"Hello, {first_name}!"
+
     heic_note = "✅ HEIC/HEIF support enabled." if HEIC_SUPPORT else \
                 "⚠️ HEIC/HEIF not supported. Install `pillow-heif`."
 
-    await update.message.reply_text(
-        "Welcome to the **AMT Scholarship Document Converter**.\n\n"
-        "This official tool assists you in preparing images for scholarship applications.\n"
-        "It converts your images to **JPEG** or **PDF**, ensuring output size ≤ 1 MB.\n\n"
-        "**How to use:**\n"
-        "• Send one or more images (photos or documents).\n"
-        "• Choose the required output format: PDF or JPEG.\n"
-        "• For PDF, you may specify a custom filename.\n\n"
-        "**Additional commands:**\n"
-        "• /settings – adjust compression settings\n"
-        "• /cancel – abort a pending operation\n\n"
+    welcome_text = (
+        f"{greeting}\n\n"
+        "Welcome to the AMT Scholarship Document Converter.\n\n"
+        "This official tool helps you prepare images for scholarship applications.\n"
+        "You can convert your files to JPEG or PDF, and the output size is always ≤ 1 MB.\n\n"
+        "How to use:\n"
+        "  1. Send one or more images (photos or documents).\n"
+        "  2. Choose the output format: PDF or JPEG.\n"
+        "  3. If PDF, you may provide a custom filename.\n\n"
+        "Additional commands:\n"
+        "  /settings – adjust compression settings\n"
+        "  /cancel – cancel a pending operation\n\n"
         f"{heic_note}\n"
         "Please send your images to begin."
     )
+    await update.message.reply_text(welcome_text)
 
 
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
